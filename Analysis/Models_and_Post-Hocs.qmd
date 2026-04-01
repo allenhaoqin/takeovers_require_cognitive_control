@@ -8,9 +8,12 @@ editor: visual
 
 ```{r}
 library(readr)
+library(dplyr)
 library(bestNormalize)
 library(emmeans)
 library(lme4)
+library(readxl)
+library(effectsize)
 
 df = read_csv("dataset.csv")
 df$automation = factor(df$automation)
@@ -30,13 +33,17 @@ All subsequent analyses were organized first by metric and then by hazard type. 
 
 df2 = subset(df,eventType=="LEFT_PEDESTRIAN")
 
-LMM<-lmerTest::lmer(rt~ (automation+nback)^2+(1| subNumber), data=df2)
+LMM<-lmerTest::lmer(rt~ (automation+nback)^2+Age+(1| subNumber), data=df2)
 
 anova(LMM)
 
-emmeans(LMM, ~ nback) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE,infer.df = TRUE)
+emm <- emmeans(LMM, ~ nback)
+
+contrast(emm, "pairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
+
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
+
 ```
 
 ## Right Pedestrian
@@ -45,17 +52,23 @@ emmeans(LMM, ~ nback) |>
 
 df2 = subset(df,eventType=="RIGHT_PEDESTRIAN")
 
-LMM<-lmerTest::lmer(rt~ automation*nback+(1 +nback||subNumber), data=df2)
+LMM<-lmerTest::lmer(rt~ automation*nback+Age+(1 |subNumber), data=df2)
 
 anova(LMM)
 
-emmeans(LMM, ~ nback|automation) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE,infer.df = TRUE)
+emm1 <- emmeans(LMM, ~ nback|automation)
 
-emmeans(LMM, ~ automation|nback) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE,infer.df = TRUE)
+contrast(emm1, "pairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
+
+eff_size(emm1, sigma = sigma(LMM), edf = df.residual(LMM))
+
+emm2 <- emmeans(LMM, ~ automation|nback)
+
+contrast(emm2, "pairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
+
+eff_size(emm2, sigma = sigma(LMM), edf = df.residual(LMM))
 
 ```
 
@@ -88,17 +101,13 @@ yj_link <- list(
 )
 
 emm <- emmeans(LMM, ~ runNumber)
+pairs(emm, adjust = "bonferroni") |>
+  summary(infer = TRUE, type="response")
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 
 emm_bt <- regrid(update(emm, tran = yj_link))
-
-summary(emm_bt, infer = TRUE)
-
 pairs(emm_bt, adjust = "bonferroni") |>
-  summary(infer = TRUE)
-
-summary(emm)    
-summary(emm_bt)  
-
+  summary(infer = TRUE, type="response")
 ```
 
 ```{r}
@@ -120,12 +129,12 @@ GLMM <- glmer (steering ~ (automation+nback)^2+(1|subNumber), family=binomial
 car::Anova(GLMM)
 
 emmeans(GLMM, ~ automation|nback) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE)
+  contrast("revpairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE,type="response")
 
 emmeans(GLMM, ~ nback|automation) |>
   contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE)
+  summary(infer = TRUE,type="response")
 ```
 
 ## Right Pedestrian
@@ -138,10 +147,6 @@ GLMM <- glmer (steering ~ (automation+nback)^2+(1+nback||subNumber), family=bino
                ,data = df2)
 
 car::Anova(GLMM)
-
-emmeans(GLMM, ~ nback) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE)
 
 ```
 
@@ -166,13 +171,16 @@ car::Anova(GLMM)
 
 df2 = subset(df,eventType=="LEFT_PEDESTRIAN")
 
-LMM<-lmerTest::lmer(jerk~ (automation+nback)^2+runNumber+nback:runNumber+(1+automation||subNumber), data=df2)
-# 
+LMM<-lmerTest::lmer(jerk~ (automation+nback)^2+runNumber+Age+nback:runNumber+(1+automation||subNumber), data=df2)
+
 anova(LMM)
-# 
-emmeans(LMM, ~ automation) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE,infer.df=TRUE,digits = 4)
+
+emm <- emmeans(LMM, ~ automation)
+
+contrast(emm, "revpairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
+
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 
 ```
 
@@ -185,12 +193,12 @@ df2 = subset(df,eventType=="RIGHT_PEDESTRIAN")
 yj_obj <- yeojohnson(df2$jerk)
 df2$y_yj <- yj_obj$x.t
 
-LMM<- lmerTest::lmer (y_yj~ automation*nback + (1+automation+nback| subNumber) ,data = df2)
+LMM<- lmerTest::lmer (y_yj~ automation*nback + (1| subNumber) ,data = df2)
 
 anova(LMM)
 
 linkfun_yj <- function(mu) as.numeric(predict(yj_obj, newdata = mu))
-linkinv_yj <- function(eta) as.numeric(predict(yj_obj, newdata = eta, inverse = TRUE)) 
+linkinv_yj <- function(eta) as.numeric(predict(yj_obj, newdata = eta, inverse = TRUE))
 
 mu_eta_yj <- function(eta, eps = 1e-6) {
   (linkinv_yj(eta + eps) - linkinv_yj(eta - eps)) / (2 * eps)
@@ -205,12 +213,18 @@ yj_link <- list(
 )
 
 emm <- emmeans(LMM, ~ automation)
-emm_bt <- regrid(update(emm, tran = yj_link))
+contrast(emm, "revpairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
 
-summary(emm_bt, infer = TRUE)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 
-pairs(emm_bt, adjust = "bonferroni") |>
-  summary(infer = TRUE)
+
+# emm_bt <- regrid(update(emm, tran = yj_link))
+# 
+# summary(emm_bt, infer = TRUE)
+# 
+# pairs(emm_bt, adjust = "bonferroni") |>
+#   summary(infer = TRUE)
 
 ```
 
@@ -219,13 +233,16 @@ pairs(emm_bt, adjust = "bonferroni") |>
 ```{r}
 df2 = subset(df,eventType=="ONCOMING_VEHICLES")
 
-LMM<- lmerTest::lmer (jerk ~ automation*nback + (1| subNumber) ,data = df2)
+LMM<- lmerTest::lmer (jerk ~ automation*nback + Age+ automation:Age+(1| subNumber) ,data = df2)
 
 anova(LMM)
 
-emmeans(LMM, ~ automation) |>
-  contrast("pairwise", adjust = "bonferroni") |>
-  summary(infer = TRUE)
+emm <- emmeans(LMM, ~ automation)
+contrast(emm, "revpairwise", adjust = "bonferroni") |>
+  summary(infer = TRUE, infer.df = TRUE)
+
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
+
 
 ```
 
@@ -246,17 +263,29 @@ emmeans(LMM, ~ automation|nback) |>
   contrast("pairwise", adjust = "bonferroni") |>
   summary(infer = TRUE,infer.df=TRUE,digits = 4)
 
+emm = emmeans(LMM, ~ automation|nback)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
+
 emmeans(LMM, ~ nback|automation) |>
-  contrast("pairwise", adjust = "bonferroni") |>
+  contrast("revpairwise", adjust = "bonferroni") |>
   summary(infer = TRUE,infer.df=TRUE,digits = 4)
+
+emm = emmeans(LMM, ~ nback|automation)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 
 emmeans(LMM, ~ nback|runNumber) |>
   contrast("pairwise", adjust = "bonferroni") |>
   summary(infer = TRUE,infer.df=TRUE,digits = 4)
 
+emm = emmeans(LMM, ~ nback|runNumber)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
+
 emmeans(LMM, ~ runNumber|nback) |>
   contrast("pairwise", adjust = "bonferroni") |>
   summary(infer = TRUE,infer.df=TRUE,digits = 4)
+
+emm = emmeans(LMM, ~ runNumber|nback)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 
 ```
 
@@ -266,7 +295,7 @@ emmeans(LMM, ~ runNumber|nback) |>
 
 df2 = subset(df,eventType=="RIGHT_PEDESTRIAN")
 
-LMM= lmerTest::lmer(minTTC~ automation * nback + (1+automation+nback|
+LMM= lmerTest::lmer(minTTC~ automation * nback + Age+(1+automation+nback|
     subNumber),data=df2)
 
 anova(LMM)
@@ -274,11 +303,14 @@ anova(LMM)
 emmeans(LMM, ~ automation) |>
   contrast("pairwise", adjust = "bonferroni") |>
   summary(infer = TRUE)
+emm = emmeans(LMM, ~ automation)
+eff_size(emm, sigma = sigma(LMM), edf = df.residual(LMM))
 ```
 
 ## Oncoming Vehicles
 
 ```{r}
+library(glmmTMB)
 df2 = subset(df,eventType=="ONCOMING_VEHICLES")
 
 GLMM <- glmmTMB::glmmTMB (minTTC ~ (automation+nback)^2+(1+automation+nback||subNumber), family = tweedie(link = "log"), data = df2)
@@ -288,6 +320,7 @@ car::Anova(GLMM)
 emmeans(GLMM, ~ automation) |>
   contrast("pairwise", adjust = "bonferroni",type='response') |>
   summary(infer = TRUE)
+
 
 ```
 
@@ -318,7 +351,6 @@ car::Anova(GLMM)
 
 ```{r}
 df2 = subset(df,eventType=="ONCOMING_VEHICLES")
-df2$automation <- relevel(df2$automation, ref = "PAD")
 
 GLMM <- glmer (crash ~ (automation+nback)^2+runNumber+automation:runNumber+(1|subNumber), family=binomial, data = df2, control = glmerControl(
                  optimizer = "bobyqa"))
@@ -326,7 +358,10 @@ GLMM <- glmer (crash ~ (automation+nback)^2+runNumber+automation:runNumber+(1|su
 car::Anova(GLMM)
 
 emmeans(GLMM, ~ automation) |>
-  contrast("pairwise", adjust = "bonferroni", type="response") |>
+  contrast("revpairwise", adjust = "bonferroni", type="response") |>
   summary(infer = TRUE)
 
 ```
+
+
+
